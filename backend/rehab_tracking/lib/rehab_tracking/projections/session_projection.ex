@@ -9,6 +9,7 @@ defmodule RehabTracking.Projections.SessionProjection do
     repo: RehabTracking.Repo,
     name: "session_projection"
 
+  import Ecto.Query
   alias RehabTracking.Domain.Events.{SessionStarted, SetRecorded, SessionEnded}
   alias RehabTracking.Projections.Schemas.Session
 

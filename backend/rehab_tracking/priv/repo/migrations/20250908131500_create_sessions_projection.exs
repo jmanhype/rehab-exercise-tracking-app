@@ -16,7 +16,7 @@ defmodule RehabTracking.Repo.Migrations.CreateSessionsProjection do
       add :total_reps, :integer, default: 0
       add :average_quality, :float, default: 0.0
       add :completion_status, :string
-      add :sets, :map, default: %{}
+      add :sets, {:array, :map}, default: []
 
       timestamps()
     end

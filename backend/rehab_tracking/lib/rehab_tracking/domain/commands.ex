@@ -3,7 +3,7 @@ defmodule RehabTracking.Domain.Commands.StartSession do
   Command to start a new exercise session.
   """
   
-  @enforce_keys [:session_id, :patient_id, :exercise_id]
+  @enforce_keys [:session_id, :patient_id, :exercise_id, :started_at]
   defstruct [
     :session_id,
     :patient_id,
@@ -34,7 +34,7 @@ defmodule RehabTracking.Domain.Commands.EndSession do
   Command to end an active exercise session.
   """
   
-  @enforce_keys [:session_id]
+  @enforce_keys [:session_id, :ended_at]
   defstruct [
     :session_id,
     :ended_at,
