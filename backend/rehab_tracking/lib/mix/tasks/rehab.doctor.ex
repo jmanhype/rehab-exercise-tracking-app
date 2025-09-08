@@ -226,7 +226,7 @@ defmodule Mix.Tasks.Rehab.Doctor do
   defp summarize_results(results) do
     error_count = Enum.count(results, & &1 == :error)
     warning_count = Enum.count(results, & &1 == :warning)
-    ok_count = Enum.count(results, & &1 == :ok)
+    _ok_count = Enum.count(results, & &1 == :ok)
     
     cond do
       error_count > 0 ->

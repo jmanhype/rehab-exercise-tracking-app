@@ -1,0 +1,132 @@
+# Rehab Exercise Tracking - Developer Commands
+# Justfile for streamlined development workflow
+#
+# Usage:
+#   just setup    - Install deps and setup database  
+#   just test     - Run all test suites
+#   just smoke    - Run smoke tests
+#   just server   - Start Phoenix development server
+#   just doctor   - Health check and compile
+
+# Default recipe
+default:
+    @just --list
+
+# Setup development environment
+setup:
+    @echo "🚀 Setting up Rehab Exercise Tracking development environment..."
+    @echo "📦 Installing dependencies..."
+    mix deps.get
+    @echo "🗄️  Setting up databases..."
+    mix ecto.setup
+    @echo "📋 Initializing EventStore..."
+    mix event_store.init
+    @echo "✅ Setup complete! Run 'just server' to start development."
+
+# Run all test suites (contract, integration, E2E, unit)
+test:
+    @echo "🧪 Running complete test suite..."
+    @echo "📋 Contract tests..."
+    mix test test/contract --cover
+    @echo "🔗 Integration tests..."
+    mix test test/integration --cover 
+    @echo "🎯 E2E tests..."
+    mix test test/e2e --cover
+    @echo "🔍 Unit tests..."
+    mix test test/unit --cover
+    @echo "📊 Overall coverage report..."
+    mix test --cover
+
+# Run smoke tests for quick validation
+smoke:
+    @echo "💨 Running smoke tests..."
+    mix run priv/smoke/smoke.exs
+
+# Start Phoenix development server
+server:
+    @echo "🌐 Starting Phoenix development server..."
+    @echo "📍 Server will be available at http://localhost:4000"
+    iex -S mix phx.server
+
+# Development health check
+doctor:
+    @echo "👩‍⚕️ Running development health checks..."
+    @echo "⚙️  Compile check with strict warnings..."
+    mix compile --warnings-as-errors
+    @echo "🧪 Quick test validation..."
+    mix test --max-failures 1
+    @echo "📊 Dependencies status..."
+    mix deps.unlock --check-unused
+    @echo "🏥 All systems healthy!"
+
+# Clean build artifacts  
+clean:
+    @echo "🧹 Cleaning build artifacts..."
+    mix deps.clean --all
+    mix clean
+    rm -rf _build/
+    @echo "✨ Clean complete!"
+
+# Reset development database
+reset-db:
+    @echo "🗄️  Resetting development database..."
+    mix ecto.reset
+    mix event_store.reset
+    @echo "♻️  Database reset complete!"
+
+# Start services (Docker) - Development mode
+services-up:
+    @echo "🐳 Starting PostgreSQL, Redis, and RabbitMQ (dev mode)..."
+    docker-compose -f docker-compose.dev.yml up -d
+    @echo "⏳ Waiting for services to be healthy..."
+    docker-compose -f docker-compose.dev.yml ps
+
+# Stop services (Docker)  
+services-down:
+    @echo "🛑 Stopping development services..."
+    docker-compose -f docker-compose.dev.yml down
+    @echo "🧹 Services stopped!"
+
+# Start full production stack
+services-full:
+    @echo "🐳 Starting full production-like stack..."
+    docker-compose up -d
+    @echo "⏳ Waiting for all services to be healthy..."
+    docker-compose ps
+
+# View service logs (dev mode by default)
+logs service="postgres" compose="docker-compose.dev.yml":
+    @echo "📋 Viewing logs for {{ service }}..."
+    docker-compose -f {{ compose }} logs -f {{ service }}
+
+# Run in production-like mode
+prod-test:
+    @echo "🏭 Testing in production-like environment..."
+    MIX_ENV=prod mix compile --warnings-as-errors
+    MIX_ENV=prod mix test
+    @echo "🚀 Production test complete!"
+
+# Generate code coverage report
+coverage:
+    @echo "📊 Generating detailed coverage report..."
+    mix test --cover
+    mix coveralls.html
+    @echo "📄 Coverage report available at cover/excoveralls.html"
+
+# Format code
+format:
+    @echo "🎨 Formatting Elixir code..."
+    mix format
+    @echo "✨ Code formatting complete!"
+
+# Security audit
+security:
+    @echo "🔐 Running security audit..."
+    mix sobelow
+    @echo "🛡️  Security audit complete!"
+
+# Performance benchmarks  
+benchmark:
+    @echo "⚡ Running performance benchmarks..."
+    mix run priv/benchmarks/event_ingestion.exs
+    @echo "📈 Benchmark complete!"

@@ -86,30 +86,8 @@ config :joken, default_signer: "rehab_tracking_secret"
 # Configure Telemetry Poller
 config :telemetry_poller, :default, period: 10_000
 
-# Configure Broadway for event processing
-config :rehab_tracking, RehabTracking.Core.BroadwayPipeline,
-  # Use in-memory producer for development/test
-  # Switch to SQS/RabbitMQ in production
-  producer: [
-    module: {BroadwayCloudPubSub.Producer, []},
-    options: [
-      subscription: "rehab_events_subscription",
-      max_number_of_messages: 100
-    ]
-  ],
-  processors: [
-    default: [
-      concurrency: 10,
-      max_demand: 50
-    ]
-  ],
-  batchers: [
-    projection_updates: [
-      concurrency: 2,
-      batch_size: 100,
-      batch_timeout: 1000
-    ]
-  ]
+# Broadway configuration is imported from separate file
+# See config/broadway.exs for detailed pipeline settings
 
 # Configure CORS
 config :cors_plug,
@@ -119,6 +97,9 @@ config :cors_plug,
             "User-Agent", "DNT", "Cache-Control", "X-Mx-ReqToken",
             "Keep-Alive", "X-Requested-With", "If-Modified-Since", 
             "X-CSRF-Token"]
+
+# Import Broadway configuration
+import_config "broadway.exs"
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

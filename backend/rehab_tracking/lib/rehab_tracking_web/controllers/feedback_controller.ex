@@ -7,7 +7,6 @@ defmodule RehabTrackingWeb.FeedbackController do
   use RehabTrackingWeb, :controller
   
   alias RehabTracking.Core.Facade
-  alias RehabTrackingWeb.FeedbackView
 
   action_fallback RehabTrackingWeb.FallbackController
 

@@ -4,7 +4,7 @@ import Head from 'next/head';
 import Layout from '@/components/Layout';
 import ExerciseChart from '@/components/ExerciseChart';
 import QualityMetrics from '@/components/QualityMetrics';
-import { requireAuth } from '@/utils/auth';
+import { requireAuth } from "@/utils/auth";
 import { 
   Patient, 
   ExerciseSession, 

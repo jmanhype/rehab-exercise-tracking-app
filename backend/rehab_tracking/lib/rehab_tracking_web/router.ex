@@ -52,9 +52,24 @@ defmodule RehabTrackingWeb.Router do
   scope "/api/v1", RehabTrackingWeb do
     pipe_through :authenticated_api
 
+    # Dashboard
+    get "/dashboard/stats", DashboardController, :stats
+    
+    # Patient list
+    get "/patients", PatientListController, :index
+    get "/patients/:id", PatientListController, :show
+
+    # Exercise sessions (minimal event-sourcing happy path)
+    post "/sessions", SessionController, :create
+    post "/sessions/:id/sets", SessionController, :record_set
+    post "/sessions/:id/finish", SessionController, :finish
+    get "/sessions/:id", SessionController, :show
+    get "/patients/:patient_id/sessions", SessionController, :index
+
     # Event ingestion
     post "/events", EventController, :create
     post "/events/batch", EventController, :create_batch
+    get "/events/health", EventController, :health
     
     # Patient event streams
     get "/patients/:id/stream", StreamController, :patient_stream
@@ -132,6 +147,23 @@ defmodule RehabTrackingWeb.Router do
   # scope "/socket", RehabTrackingWeb do
   #   get "/", SocketHandler, :upgrade
   # end
+
+  # Legacy API routes (redirect to v1)
+  scope "/api", RehabTrackingWeb do
+    pipe_through :authenticated_api
+    
+    # Dashboard and patient routes for backward compatibility
+    get "/dashboard/stats", DashboardController, :stats
+    get "/patients", PatientListController, :index
+    get "/patients/:id", PatientListController, :show
+    
+    # Patient detail endpoints for frontend
+    get "/patients/:patient_id/sessions", PatientListController, :sessions
+    get "/patients/:patient_id/adherence", PatientListController, :adherence
+    get "/patients/:patient_id/quality", PatientListController, :quality
+    get "/patients/:patient_id/progress", PatientListController, :progress
+    get "/patients/:patient_id/workout-plan", PatientListController, :workout_plan
+  end
 
   # Catch-all route for API versioning
   scope "/api", RehabTrackingWeb do

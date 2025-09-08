@@ -1,0 +1,294 @@
+name: Release Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      pre_release:
+        description: 'Pre-release (beta/rc)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate-release:
+    name: Validate Release Readiness
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16.2'
+          otp-version: '27.0'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Check unreleased changes
+        run: |
+          if ! grep -q "## \[Unreleased\]" CHANGELOG.md; then
+            echo "❌ No unreleased changes found in CHANGELOG.md"
+            exit 1
+          fi
+          echo "✅ Unreleased changes found in CHANGELOG.md"
+
+      - name: Validate version format
+        run: |
+          current_version=$(grep 'version:' mix.exs | sed 's/.*version: "\(.*\)".*/\1/')
+          echo "Current version: $current_version"
+          if ! [[ $current_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Invalid version format in mix.exs"
+            exit 1
+          fi
+          echo "✅ Valid version format"
+
+      - name: Check for breaking changes
+        run: |
+          if git log --oneline $(git describe --tags --abbrev=0)..HEAD | grep -i "BREAKING\|breaking"; then
+            echo "⚠️ Breaking changes detected - ensure major version bump"
+            if [ "${{ inputs.release_type }}" != "major" ]; then
+              echo "❌ Breaking changes require major version bump"
+              exit 1
+            fi
+          fi
+
+      - name: Run full test suite
+        run: |
+          mix test --cover
+          mix credo --strict
+          mix dialyzer
+        env:
+          MIX_ENV: test
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: validate-release
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Calculate next version
+        id: version
+        run: |
+          current_version=$(grep 'version:' mix.exs | sed 's/.*version: "\(.*\)".*/\1/')
+          IFS='.' read -ra VERSION_PARTS <<< "$current_version"
+          major=${VERSION_PARTS[0]}
+          minor=${VERSION_PARTS[1]}
+          patch=${VERSION_PARTS[2]}
+          
+          case "${{ inputs.release_type }}" in
+            "major")
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            "minor")
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            "patch")
+              patch=$((patch + 1))
+              ;;
+          esac
+          
+          new_version="${major}.${minor}.${patch}"
+          if [ "${{ inputs.pre_release }}" == "true" ]; then
+            new_version="${new_version}-$(date +%Y%m%d%H%M%S)"
+          fi
+          
+          echo "current_version=$current_version" >> $GITHUB_OUTPUT
+          echo "new_version=$new_version" >> $GITHUB_OUTPUT
+          echo "New version will be: $new_version"
+
+      - name: Update version in mix.exs
+        run: |
+          sed -i 's/version: "[0-9.]*"/version: "${{ steps.version.outputs.new_version }}"/' mix.exs
+          git add mix.exs
+
+      - name: Update CHANGELOG.md
+        run: |
+          # Extract unreleased changes
+          awk '/## \[Unreleased\]/{flag=1;next}/## \[[0-9]/{flag=0}flag' CHANGELOG.md > unreleased_changes.txt
+          
+          # Create new changelog entry
+          release_date=$(date +%Y-%m-%d)
+          new_entry="## [${{ steps.version.outputs.new_version }}] - $release_date"
+          
+          # Update changelog
+          sed -i "s/## \[Unreleased\]/$new_entry/" CHANGELOG.md
+          sed -i "/^$new_entry$/r unreleased_changes.txt" CHANGELOG.md
+          
+          # Add new unreleased section
+          sed -i "s/^$new_entry$/## [Unreleased]\n\n$new_entry/" CHANGELOG.md
+          
+          rm unreleased_changes.txt
+          git add CHANGELOG.md
+
+      - name: Create release commit
+        run: |
+          git commit -m "Release v${{ steps.version.outputs.new_version }}"
+          git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
+
+      - name: Push changes
+        run: |
+          git push origin main
+          git push origin "v${{ steps.version.outputs.new_version }}"
+
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          # Extract changes for this version
+          awk '/## \[${{ steps.version.outputs.new_version }}\]/{flag=1;next}/## \[[0-9]/{flag=0}flag' CHANGELOG.md > release_notes.txt
+          
+          # Create GitHub release notes
+          cat << EOF > github_release_notes.md
+          ## What's Changed
+          
+          $(cat release_notes.txt)
+          
+          ## Technical Details
+          
+          - **Elixir Version**: 1.16.2
+          - **OTP Version**: 27.0
+          - **Phoenix Version**: 1.7.x
+          - **Docker Image**: \`ghcr.io/${{ github.repository }}:v${{ steps.version.outputs.new_version }}\`
+          
+          ## Deployment
+          
+          This release will be automatically deployed to staging and production environments.
+          
+          ## Database Migrations
+          
+          $(if git diff --name-only v${{ steps.version.outputs.current_version }}..HEAD | grep -q "priv/repo/migrations"; then echo "⚠️ This release contains database migrations"; else echo "✅ No database migrations in this release"; fi)
+          
+          ## Breaking Changes
+          
+          $(if git log --oneline v${{ steps.version.outputs.current_version }}..HEAD | grep -qi "BREAKING\|breaking"; then echo "⚠️ This release contains breaking changes - see changelog for details"; else echo "✅ No breaking changes"; fi)
+          EOF
+          
+          echo "release_notes_path=github_release_notes.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "v${{ steps.version.outputs.new_version }}"
+          name: "Release v${{ steps.version.outputs.new_version }}"
+          bodyFile: ${{ steps.release_notes.outputs.release_notes_path }}
+          prerelease: ${{ inputs.pre_release }}
+          generateReleaseNotes: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  post-release:
+    name: Post-Release Tasks
+    runs-on: ubuntu-latest
+    needs: create-release
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Trigger deployment workflow
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          event-type: release-created
+          client-payload: |
+            {
+              "version": "${{ needs.create-release.outputs.new_version }}",
+              "pre_release": ${{ inputs.pre_release }}
+            }
+
+      - name: Update documentation
+        run: |
+          # Trigger documentation update
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.RELEASE_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type":"docs-update","client_payload":{"version":"${{ needs.create-release.outputs.new_version }}"}}'
+
+      - name: Notify teams
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#releases'
+          text: |
+            🚀 New release available!
+            **Version**: v${{ needs.create-release.outputs.new_version }}
+            **Type**: ${{ inputs.release_type }}${{ inputs.pre_release && ' (pre-release)' || '' }}
+            **Release Notes**: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.create-release.outputs.new_version }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  rollback:
+    name: Emergency Rollback
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Rollback changes
+        run: |
+          # Remove the tag if it was created
+          git tag -d "v${{ needs.create-release.outputs.new_version }}" 2>/dev/null || true
+          git push --delete origin "v${{ needs.create-release.outputs.new_version }}" 2>/dev/null || true
+          
+          # Reset to previous commit
+          git reset --hard HEAD~1
+          git push --force-with-lease origin main
+
+      - name: Notify rollback
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#releases'
+          text: |
+            ⚠️ Release rollback executed
+            **Failed Version**: v${{ needs.create-release.outputs.new_version }}
+            **Action**: Release process failed and changes have been reverted
+            **Check**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

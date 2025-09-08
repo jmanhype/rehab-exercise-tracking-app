@@ -48,7 +48,7 @@ defmodule RehabTrackingWeb.Plugs.FHIRAuthPlug do
         |> assign(:fhir_authenticated, true)
         
       {:error, reason} ->
-        Logger.warn("FHIR token validation failed: #{inspect(reason)}")
+        Logger.warning("FHIR token validation failed: #{inspect(reason)}")
         
         conn
         |> put_status(:unauthorized)

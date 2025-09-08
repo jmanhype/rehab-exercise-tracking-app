@@ -35,7 +35,7 @@ defmodule RehabTrackingWeb.Plugs.RateLimitPlug do
         conn
         
       {:error, :rate_limited, retry_after} ->
-        Logger.warn("Rate limit exceeded for client: #{client_id}")
+        Logger.warning("Rate limit exceeded for client: #{client_id}")
         
         conn
         |> put_status(:too_many_requests)

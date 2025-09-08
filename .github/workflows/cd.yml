@@ -1,0 +1,300 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    name: Build and Push Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            ELIXIR_VERSION=1.16.2
+            OTP_VERSION=27.0
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VCS_REF=${{ github.sha }}
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging-rehab.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Kubernetes
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+
+      - name: Deploy to Staging
+        uses: azure/k8s-deploy@v1
+        with:
+          namespace: rehab-staging
+          manifests: |
+            k8s/staging/
+          images: |
+            ${{ needs.build.outputs.image }}
+          strategy: rolling
+
+      - name: Wait for deployment
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/rehab-api -n rehab-staging
+
+      - name: Run health checks
+        run: |
+          curl -f https://staging-rehab.example.com/health || exit 1
+          curl -f https://staging-rehab.example.com/ready || exit 1
+
+      - name: Run smoke tests
+        run: |
+          kubectl run smoke-test --rm -i --restart=Never \
+            --image=${{ needs.build.outputs.image }} \
+            --command -- mix test test/smoke/ \
+            -n rehab-staging
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, deploy-staging]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'production'
+    environment:
+      name: production
+      url: https://rehab.example.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Kubernetes
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+
+      - name: Create deployment backup
+        run: |
+          kubectl get deployment rehab-api -n rehab-production -o yaml > deployment-backup.yaml
+
+      - name: Deploy to Production (Blue-Green)
+        uses: azure/k8s-deploy@v1
+        with:
+          namespace: rehab-production
+          manifests: |
+            k8s/production/
+          images: |
+            ${{ needs.build.outputs.image }}
+          strategy: blue-green
+          traffic-split-method: pod
+          percentage: 20
+          baseline-and-canary-replicas: 2
+
+      - name: Wait for canary deployment
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/rehab-api -n rehab-production
+
+      - name: Run production health checks
+        run: |
+          curl -f https://rehab.example.com/health || exit 1
+          curl -f https://rehab.example.com/ready || exit 1
+
+      - name: Run production smoke tests
+        run: |
+          kubectl run prod-smoke-test --rm -i --restart=Never \
+            --image=${{ needs.build.outputs.image }} \
+            --command -- mix test test/smoke/ \
+            -n rehab-production
+
+      - name: Promote to full traffic
+        if: success()
+        uses: azure/k8s-promote@v1
+        with:
+          namespace: rehab-production
+          strategy: blue-green
+          traffic-split-method: pod
+          percentage: 100
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl apply -f deployment-backup.yaml -n rehab-production
+          kubectl rollout undo deployment/rehab-api -n rehab-production
+
+  notify:
+    name: Deployment Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    
+    steps:
+      - name: Notify Slack on Success
+        if: needs.deploy-production.result == 'success'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#deployments'
+          text: |
+            ✅ Production deployment successful!
+            Version: ${{ github.ref_name }}
+            Image: ${{ needs.build.outputs.image }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on Failure
+        if: needs.deploy-production.result == 'failure' || needs.deploy-staging.result == 'failure'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#deployments'
+          text: |
+            ❌ Deployment failed!
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Create GitHub Release
+        if: needs.deploy-production.result == 'success' && startsWith(github.ref, 'refs/tags/v')
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          generateReleaseNotes: true
+          body: |
+            ## Deployment Information
+            - **Image**: `${{ needs.build.outputs.image }}`
+            - **Digest**: `${{ needs.build.outputs.digest }}`
+            - **Environment**: Production
+            - **Deployed At**: ${{ github.event.head_commit.timestamp }}
+
+  database-migration:
+    name: Database Migration
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: database-migration
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16.2'
+          otp-version: '27.0'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-migration-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get --only prod
+
+      - name: Compile
+        run: MIX_ENV=prod mix compile
+
+      - name: Run database migrations (Staging)
+        run: MIX_ENV=prod mix ecto.migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_STAGING }}
+
+      - name: Run database migrations (Production)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: MIX_ENV=prod mix ecto.migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PRODUCTION }}
+
+  security-scan:
+    name: Security Scan (Production Images)
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build.outputs.image }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Check for critical vulnerabilities
+        run: |
+          trivy image --exit-code 1 --severity CRITICAL ${{ needs.build.outputs.image }}

@@ -20,7 +20,7 @@ defmodule Mix.Tasks.Rehab.Seed do
   
   def run(args) do
     {opts, _} = OptionParser.parse!(args, 
-      strict: [patients: :integer, sessions: :integer, reset: :boolean]
+      strict: [patients: :integer, sessions: :integer, reset: :boolean, use_simulator: :boolean]
     )
     
     Mix.Task.run("app.start")
@@ -33,21 +33,89 @@ defmodule Mix.Tasks.Rehab.Seed do
     
     patient_count = opts[:patients] || 25
     session_count = opts[:sessions] || 500
+    use_simulator = opts[:use_simulator] || false
     
     Mix.shell().info("🌱 Seeding RehabTracking with test data...")
     Mix.shell().info("Patients: #{patient_count}, Sessions: #{session_count}")
     
-    # Create test users and profiles
-    {therapists, patients} = create_test_users(patient_count)
-    
-    # Generate exercise events and build projections
-    generate_exercise_data(therapists, patients, session_count)
-    
-    # Create work queue items
-    generate_work_queue_data(therapists, patients)
+    if use_simulator do
+      Mix.shell().info("Using event simulator for realistic data generation...")
+      # Use our new simulator for more realistic event-sourced data
+      generate_simulated_data(patient_count, session_count)
+    else
+      # Create test users and profiles (legacy approach)
+      {therapists, patients} = create_test_users(patient_count)
+      
+      # Generate exercise events and build projections
+      generate_exercise_data(therapists, patients, session_count)
+      
+      # Create work queue items
+      generate_work_queue_data(therapists, patients)
+    end
     
     Mix.shell().info("✅ Seeding completed successfully!")
-    display_summary(therapists, patients)
+    
+    unless use_simulator do
+      {therapists, patients} = {[], []}  # Placeholder for legacy display
+      display_summary(therapists, patients)
+    end
+  end
+
+  defp generate_simulated_data(patient_count, _session_count) do
+    alias RehabTracking.Simulator
+    
+    Mix.shell().info("Generating realistic event-sourced data with Simulator...")
+    
+    # Generate patients with different profiles for variety
+    patient_profiles = [:high, :steady, :declining, :sporadic]
+    days_to_simulate = 30  # 30 days of patient history
+    
+    results = for i <- 1..patient_count do
+      patient_id = UUID.uuid4()
+      profile = Enum.random(patient_profiles)
+      
+      Mix.shell().info("Generating patient #{i}/#{patient_count} with #{profile} profile...")
+      
+      case Simulator.generate_patient_simulation(patient_id, days_to_simulate, profile) do
+        {:ok, data} ->
+          Mix.shell().info("  ✓ Generated #{data.summary.total_events} events")
+          {patient_id, data.summary}
+        {:error, reason} ->
+          Mix.shell().error("  ✗ Failed: #{inspect(reason)}")
+          {patient_id, :error}
+      end
+    end
+    
+    {successful, failed} = Enum.split_with(results, fn {_id, result} -> result != :error end)
+    
+    Mix.shell().info("\n📊 Simulation Summary:")
+    Mix.shell().info("=====================")
+    Mix.shell().info("Successful patients: #{length(successful)}")
+    Mix.shell().info("Failed patients: #{length(failed)}")
+    
+    if length(successful) > 0 do
+      total_events = Enum.sum(Enum.map(successful, fn {_id, summary} -> 
+        summary.total_events 
+      end))
+      Mix.shell().info("Total events generated: #{total_events}")
+      
+      # Show event type breakdown from first patient
+      {_id, first_summary} = List.first(successful)
+      Mix.shell().info("Event types: #{inspect(first_summary.event_breakdown)}")
+    end
+    
+    # Generate some edge cases for testing
+    if patient_count >= 5 do
+      Mix.shell().info("\nGenerating edge case scenarios...")
+      edge_patient_id = UUID.uuid4()
+      
+      case Simulator.generate_edge_cases(edge_patient_id) do
+        {:ok, edge_data} ->
+          Mix.shell().info("✓ Generated #{length(edge_data.edge_case_results)} edge case scenarios")
+        {:error, reason} ->
+          Mix.shell().error("✗ Edge case generation failed: #{inspect(reason)}")
+      end
+    end
   end
   
   defp reset_projections do
@@ -157,9 +225,9 @@ defmodule Mix.Tasks.Rehab.Seed do
     {therapists, patients}
   end
   
-  defp generate_exercise_data(therapists, patients, session_count) do
+  defp generate_exercise_data(_therapists, patients, session_count) do
     alias RehabTracking.Repo
-    alias RehabTracking.Schemas.{Adherence, Quality, WorkQueue}
+    alias RehabTracking.Schemas.{Adherence, Quality}
     
     Mix.shell().info("Generating #{session_count} exercise sessions...")
     
@@ -260,13 +328,13 @@ defmodule Mix.Tasks.Rehab.Seed do
     |> Repo.insert()
   end
   
-  defp generate_patient_sessions(patient, therapist, count) do
+  defp generate_patient_sessions(patient, _therapist, count) do
     alias RehabTracking.Repo
     alias RehabTracking.Schemas.{Adherence, Quality}
     
     exercise_types = ["knee_extension", "shoulder_flexion", "hip_abduction", "ankle_dorsiflexion"]
     
-    Enum.each(1..count, fn i ->
+    Enum.each(1..count, fn _i ->
       session_id = Ecto.UUID.generate()
       exercise_type = Enum.random(exercise_types)
       days_ago = Enum.random(0..90)

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import Layout from '@/components/Layout';
-import { requireAuth } from '@/utils/auth';
+import { requireAuth } from "@/utils/auth";
 import { Alert } from '@/types';
 import { apiService } from '@/services/api';
 import { formatDateTime, getAlertColor } from '@/utils/format';

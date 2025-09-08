@@ -1,0 +1,595 @@
+name: Performance Testing
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, labeled]
+  schedule:
+    # Run performance tests every Sunday at 3 AM UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Performance test type'
+        required: true
+        default: 'load'
+        type: choice
+        options:
+          - load
+          - stress
+          - spike
+          - endurance
+          - baseline
+
+env:
+  MIX_ENV: bench
+  ELIXIR_VERSION: '1.16.2'
+  OTP_VERSION: '27.0'
+
+jobs:
+  benchmark-setup:
+    name: Benchmark Environment Setup
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'performance') || github.event_name != 'pull_request'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rehab_exercise_tracking_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    outputs:
+      baseline_exists: ${{ steps.check_baseline.outputs.exists }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-bench-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-bench-
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Compile for benchmarking
+        run: mix compile
+
+      - name: Setup benchmark database
+        run: |
+          mix event_store.init
+          mix ecto.setup
+          mix rehab.seed --size large --events 100000
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+
+      - name: Check for existing baseline
+        id: check_baseline
+        run: |
+          if [ -f "bench/baseline/main.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  api-benchmarks:
+    name: API Performance Benchmarks
+    runs-on: ubuntu-latest
+    needs: benchmark-setup
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rehab_exercise_tracking_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-bench-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Compile for benchmarking
+        run: mix compile
+
+      - name: Setup benchmark database
+        run: |
+          mix event_store.init
+          mix ecto.setup
+          mix rehab.seed --size large --events 100000
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+
+      - name: Start Phoenix server for benchmarking
+        run: |
+          mix phx.server &
+          sleep 10
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+          REDIS_URL: redis://localhost:6379/0
+          PORT: 4000
+
+      - name: Run API benchmarks
+        run: |
+          mix bench api --duration 60s --target 1000rps
+          mix bench api.event_ingestion --duration 30s --target 500rps
+          mix bench api.projections --duration 30s --target 2000rps
+          mix bench api.queries --duration 45s --target 1500rps
+        env:
+          BENCHMARK_TARGET_URL: http://localhost:4000
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-benchmark-results
+          path: bench/results/
+
+  broadway-benchmarks:
+    name: Broadway Pipeline Benchmarks
+    runs-on: ubuntu-latest
+    needs: benchmark-setup
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rehab_exercise_tracking_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-bench-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Setup benchmark database
+        run: |
+          mix event_store.init
+          mix ecto.setup
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+
+      - name: Run Broadway benchmarks
+        run: |
+          mix bench broadway --events 50000 --rate 1000
+          mix bench broadway.backpressure --events 10000 --burst-size 5000
+          mix bench broadway.batching --events 25000 --batch-sizes "50,100,200"
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+
+      - name: Upload Broadway benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadway-benchmark-results
+          path: bench/results/broadway/
+
+  memory-benchmarks:
+    name: Memory & Resource Benchmarks
+    runs-on: ubuntu-latest
+    needs: benchmark-setup
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rehab_exercise_tracking_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-bench-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Setup benchmark database
+        run: |
+          mix event_store.init
+          mix ecto.setup
+          mix rehab.seed --size xlarge --events 500000
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+
+      - name: Run memory benchmarks
+        run: |
+          mix bench memory --profile heap
+          mix bench memory --profile projection_rebuild
+          mix bench memory --profile event_replay
+          mix bench memory --profile concurrent_streams
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+
+      - name: Upload memory benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-benchmark-results
+          path: bench/results/memory/
+
+  load-testing:
+    name: Load Testing with K6
+    runs-on: ubuntu-latest
+    needs: benchmark-setup
+    if: github.event.inputs.test_type == 'load' || github.event.inputs.test_type == '' || github.event_name != 'workflow_dispatch'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rehab_exercise_tracking_bench
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-bench-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Setup application for load testing
+        run: |
+          mix event_store.init
+          mix ecto.setup
+          mix rehab.seed --size large
+          mix phx.server &
+          sleep 15
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_bench
+          REDIS_URL: redis://localhost:6379/0
+          PORT: 4000
+
+      - name: Install K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run load tests
+        run: |
+          k6 run --out json=load-test-results.json test/performance/load/api_load_test.js
+          k6 run --out json=event-ingestion-results.json test/performance/load/event_ingestion_test.js
+          k6 run --out json=concurrent-users-results.json test/performance/load/concurrent_users_test.js
+
+      - name: Parse K6 results
+        run: |
+          echo "## Load Test Results" > load-test-summary.md
+          echo "" >> load-test-summary.md
+          
+          # Parse and format results
+          jq -r '
+            select(.type == "Point" and .metric == "http_req_duration") |
+            "**Response Time (p95)**: \(.data.value)ms"
+          ' load-test-results.json | head -1 >> load-test-summary.md
+          
+          jq -r '
+            select(.type == "Point" and .metric == "http_reqs") |
+            "**Total Requests**: \(.data.value)"
+          ' load-test-results.json | tail -1 >> load-test-summary.md
+          
+          jq -r '
+            select(.type == "Point" and .metric == "http_req_failed") |
+            "**Failed Requests**: \(.data.value)%"
+          ' load-test-results.json | tail -1 >> load-test-summary.md
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            *-results.json
+            load-test-summary.md
+
+  performance-regression:
+    name: Performance Regression Analysis
+    runs-on: ubuntu-latest
+    needs: [api-benchmarks, broadway-benchmarks, memory-benchmarks]
+    if: needs.benchmark-setup.outputs.baseline_exists == 'true' && github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download API benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: api-benchmark-results
+          path: bench/results/current/
+
+      - name: Download Broadway benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: broadway-benchmark-results
+          path: bench/results/current/broadway/
+
+      - name: Download memory benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: memory-benchmark-results
+          path: bench/results/current/memory/
+
+      - name: Setup Python for analysis
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install analysis dependencies
+        run: |
+          pip install pandas numpy matplotlib seaborn
+
+      - name: Run regression analysis
+        run: |
+          python scripts/performance/analyze_regression.py \
+            --baseline bench/baseline/main.json \
+            --current bench/results/current/ \
+            --threshold 0.15 \
+            --output regression-report.json
+
+      - name: Generate regression report
+        run: |
+          python scripts/performance/generate_report.py \
+            --input regression-report.json \
+            --format markdown \
+            --output performance-regression-report.md
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('performance-regression-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📊 Performance Regression Analysis\n\n${report}`
+            });
+
+      - name: Upload regression analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-analysis
+          path: |
+            regression-report.json
+            performance-regression-report.md
+
+  update-baseline:
+    name: Update Performance Baseline
+    runs-on: ubuntu-latest
+    needs: [api-benchmarks, broadway-benchmarks, memory-benchmarks]
+    if: github.ref == 'refs/heads/main' && success()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-benchmark-results'
+          path: bench/results/new-baseline/
+
+      - name: Merge baseline data
+        run: |
+          mkdir -p bench/baseline
+          python scripts/performance/merge_baseline.py \
+            --input bench/results/new-baseline/ \
+            --output bench/baseline/main.json
+
+      - name: Commit baseline update
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add bench/baseline/main.json
+          git commit -m "Update performance baseline [skip ci]" || exit 0
+          git push
+
+  performance-report:
+    name: Performance Summary Report
+    runs-on: ubuntu-latest
+    needs: [api-benchmarks, broadway-benchmarks, memory-benchmarks, load-testing]
+    if: always()
+    
+    steps:
+      - name: Generate performance summary
+        run: |
+          echo "# 📊 Performance Test Summary" > performance-summary.md
+          echo "" >> performance-summary.md
+          echo "**Date**: $(date)" >> performance-summary.md
+          echo "**Commit**: ${{ github.sha }}" >> performance-summary.md
+          echo "**Branch**: ${{ github.ref_name }}" >> performance-summary.md
+          echo "" >> performance-summary.md
+          
+          echo "## Test Results" >> performance-summary.md
+          echo "" >> performance-summary.md
+          
+          if [ "${{ needs.api-benchmarks.result }}" == "success" ]; then
+            echo "✅ **API Benchmarks**: PASSED" >> performance-summary.md
+          else
+            echo "❌ **API Benchmarks**: FAILED" >> performance-summary.md
+          fi
+          
+          if [ "${{ needs.broadway-benchmarks.result }}" == "success" ]; then
+            echo "✅ **Broadway Benchmarks**: PASSED" >> performance-summary.md
+          else
+            echo "❌ **Broadway Benchmarks**: FAILED" >> performance-summary.md
+          fi
+          
+          if [ "${{ needs.memory-benchmarks.result }}" == "success" ]; then
+            echo "✅ **Memory Benchmarks**: PASSED" >> performance-summary.md
+          else
+            echo "❌ **Memory Benchmarks**: FAILED" >> performance-summary.md
+          fi
+          
+          if [ "${{ needs.load-testing.result }}" == "success" ]; then
+            echo "✅ **Load Testing**: PASSED" >> performance-summary.md
+          else
+            echo "❌ **Load Testing**: FAILED" >> performance-summary.md
+          fi
+          
+          echo "" >> performance-summary.md
+          echo "View detailed results in the [Actions tab](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> performance-summary.md
+
+      - name: Upload performance summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-summary
+          path: performance-summary.md
+
+      - name: Notify team on significant regressions
+        if: contains(needs.*.result, 'failure')
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#performance'
+          text: |
+            📉 Performance regression detected!
+            **Repository**: ${{ github.repository }}
+            **Branch**: ${{ github.ref_name }}
+            **Commit**: ${{ github.sha }}
+            **Results**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

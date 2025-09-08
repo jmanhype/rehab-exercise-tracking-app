@@ -7,7 +7,6 @@ defmodule RehabTrackingWeb.EventController do
   use RehabTrackingWeb, :controller
   
   alias RehabTracking.Core.Facade
-  alias RehabTrackingWeb.EventView
 
   action_fallback RehabTrackingWeb.FallbackController
 
@@ -230,7 +229,7 @@ defmodule RehabTrackingWeb.EventController do
         |> put_status(:created)
         |> render("events.json", events: events)
 
-      error ->
+      _error ->
         # At least one failed
         conn
         |> put_status(:unprocessable_entity)

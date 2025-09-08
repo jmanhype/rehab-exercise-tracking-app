@@ -86,7 +86,7 @@ defmodule RehabTracking.Repo.Migrations.CreateUserAuthentication do
     end
 
     # PHI consent tracking
-    create table(:phi_consents) do
+    create table(:phi_consents, primary_key: false) do
       add :id, :uuid, primary_key: true
       add :patient_user_id, :uuid, null: false
       add :consenting_user_id, :uuid, null: false  # Could be patient or guardian
@@ -117,7 +117,7 @@ defmodule RehabTracking.Repo.Migrations.CreateUserAuthentication do
     end
 
     # Authentication sessions and tokens
-    create table(:user_sessions) do
+    create table(:user_sessions, primary_key: false) do
       add :id, :uuid, primary_key: true
       add :user_id, :uuid, null: false
       add :token_hash, :string, size: 128, null: false
@@ -141,7 +141,7 @@ defmodule RehabTracking.Repo.Migrations.CreateUserAuthentication do
     end
 
     # Break-glass emergency access logging
-    create table(:emergency_access_logs) do
+    create table(:emergency_access_logs, primary_key: false) do
       add :id, :uuid, primary_key: true
       add :accessing_user_id, :uuid, null: false
       add :patient_user_id, :uuid, null: false

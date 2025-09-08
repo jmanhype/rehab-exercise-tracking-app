@@ -68,20 +68,25 @@ class ApiService {
 
   // Authentication methods
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
-    const response = await this.api.post<AuthResponse>('/api/auth/login', credentials);
-    this.token = response.data.token;
+    const response = await this.api.post('/api/v1/auth/login', credentials);
+    // Backend returns access_token, not token
+    this.token = response.data.access_token || response.data.token;
     
     if (typeof window !== 'undefined') {
       localStorage.setItem('auth_token', this.token);
       localStorage.setItem('user', JSON.stringify(response.data.user));
     }
     
-    return response.data;
+    // Map the response to match frontend expectations
+    return {
+      ...response.data,
+      token: this.token
+    };
   }
 
   async logout(): Promise<void> {
     try {
-      await this.api.post('/api/auth/logout');
+      await this.api.post('/api/v1/auth/logout');
     } finally {
       this.token = null;
       if (typeof window !== 'undefined') {
@@ -92,7 +97,7 @@ class ApiService {
   }
 
   async getCurrentUser(): Promise<User> {
-    const response = await this.api.get<ApiResponse<User>>('/api/auth/me');
+    const response = await this.api.get<ApiResponse<User>>('/api/v1/auth/me');
     return response.data.data;
   }
 

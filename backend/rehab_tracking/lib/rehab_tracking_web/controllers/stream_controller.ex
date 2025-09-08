@@ -7,7 +7,6 @@ defmodule RehabTrackingWeb.StreamController do
   use RehabTrackingWeb, :controller
   
   alias RehabTracking.Core.Facade
-  alias RehabTrackingWeb.StreamView
 
   action_fallback RehabTrackingWeb.FallbackController
 
@@ -117,7 +116,7 @@ defmodule RehabTrackingWeb.StreamController do
   Gets events within a specific date range.
   GET /api/v1/patients/:id/stream/date_range
   """
-  def date_range(conn, %{"id" => patient_id, "start_date" => start_date, "end_date" => end_date} = params) do
+  def date_range(conn, %{"id" => patient_id, "start_date" => start_date, "end_date" => end_date} = _params) do
     with {:ok, start_dt} <- parse_datetime(start_date),
          {:ok, end_dt} <- parse_datetime(end_date),
          {:ok, events} <- Facade.get_patient_stream(patient_id, count: :all) do

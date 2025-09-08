@@ -1,0 +1,427 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scan every Monday at 2 AM UTC
+    - cron: '0 2 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16.2'
+          otp-version: '27.0'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-security-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Run Mix Audit (Hex packages)
+        run: mix deps.audit
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'assets/package-lock.json'
+
+      - name: Install npm dependencies
+        run: npm ci --prefix assets
+
+      - name: Run npm audit
+        run: npm audit --prefix assets --audit-level moderate
+
+  codeql-analysis:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        language: [ 'javascript' ]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'assets/package-lock.json'
+
+      - name: Install npm dependencies
+        run: npm ci --prefix assets
+
+      - name: Build JavaScript assets
+        run: npm run build --prefix assets
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+
+  sobelow-security:
+    name: Sobelow Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16.2'
+          otp-version: '27.0'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-security-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Compile project
+        run: mix compile
+
+      - name: Run Sobelow security analysis
+        run: |
+          mix sobelow --config \
+            --format sarif \
+            --output sobelow-results.sarif \
+            --exit
+
+      - name: Upload Sobelow SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sobelow-results.sarif
+          category: sobelow
+
+  semgrep-analysis:
+    name: Semgrep Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/owasp-top-ten
+            p/elixir
+            p/phoenix
+          generateSarif: "1"
+
+      - name: Upload Semgrep SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  container-security:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t rehab-security-scan:${{ github.sha }} -f Dockerfile.prod .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'rehab-security-scan:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: trivy
+
+      - name: Run Grype vulnerability scanner
+        uses: anchore/scan-action@v3
+        with:
+          image: 'rehab-security-scan:${{ github.sha }}'
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+          output-file: grype-results.sarif
+
+      - name: Upload Grype scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'grype-results.sarif'
+          category: grype
+
+  secrets-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Run TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  security-headers:
+    name: Security Headers Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rehab_exercise_tracking_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16.2'
+          otp-version: '27.0'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-security-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Compile and start server
+        run: |
+          mix ecto.setup
+          mix phx.server &
+          sleep 10
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/rehab_exercise_tracking_test
+          PORT: 4000
+          MIX_ENV: test
+
+      - name: Check security headers
+        run: |
+          curl -I http://localhost:4000 | grep -E "(X-Frame-Options|X-Content-Type-Options|X-XSS-Protection|Strict-Transport-Security|Content-Security-Policy)" || {
+            echo "❌ Missing security headers!"
+            echo "Expected headers:"
+            echo "  - X-Frame-Options: DENY or SAMEORIGIN"
+            echo "  - X-Content-Type-Options: nosniff"
+            echo "  - X-XSS-Protection: 1; mode=block"
+            echo "  - Strict-Transport-Security: max-age=31536000; includeSubDomains"
+            echo "  - Content-Security-Policy: (configured policy)"
+            exit 1
+          }
+
+  hipaa-compliance:
+    name: HIPAA Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Elixir and OTP
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.16.2'
+          otp-version: '27.0'
+
+      - name: Cache Mix dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-security-${{ hashFiles('**/mix.lock') }}
+
+      - name: Install Mix dependencies
+        run: mix deps.get
+
+      - name: Check PHI handling patterns
+        run: |
+          echo "🔍 Checking PHI handling compliance..."
+          
+          # Check for proper encryption flags
+          if ! grep -r "phi.*true" lib/; then
+            echo "❌ No PHI flags found in codebase"
+            exit 1
+          fi
+          
+          # Check for audit trail implementation
+          if ! grep -r "audit_trail\|audit_log" lib/; then
+            echo "❌ No audit trail implementation found"
+            exit 1
+          fi
+          
+          # Check for consent tracking
+          if ! grep -r "consent.*id" lib/; then
+            echo "❌ No consent tracking found"
+            exit 1
+          fi
+          
+          # Check for encryption implementation
+          if ! grep -r "encrypt\|cipher" lib/; then
+            echo "❌ No encryption implementation found"
+            exit 1
+          fi
+          
+          echo "✅ HIPAA compliance checks passed"
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "🔍 Checking for hardcoded secrets..."
+          
+          # Check for potential API keys or passwords
+          if grep -r -E "(password|secret|key|token).*['\"]([a-zA-Z0-9]{20,})['\"]" lib/ config/ || true; then
+            echo "⚠️ Potential hardcoded secrets found - review above matches"
+          fi
+          
+          # Check for database URLs
+          if grep -r "postgres://.*:.*@" lib/ config/ || true; then
+            echo "❌ Hardcoded database URLs found"
+            exit 1
+          fi
+          
+          echo "✅ No obvious hardcoded secrets found"
+
+  security-report:
+    name: Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-audit, sobelow-security, secrets-scan, hipaa-compliance]
+    if: always()
+    
+    steps:
+      - name: Generate Security Report
+        run: |
+          echo "# Security Scan Report" > security-report.md
+          echo "" >> security-report.md
+          echo "**Date**: $(date)" >> security-report.md
+          echo "**Commit**: ${{ github.sha }}" >> security-report.md
+          echo "" >> security-report.md
+          
+          echo "## Results" >> security-report.md
+          echo "" >> security-report.md
+          
+          if [ "${{ needs.dependency-audit.result }}" == "success" ]; then
+            echo "✅ **Dependency Audit**: PASSED" >> security-report.md
+          else
+            echo "❌ **Dependency Audit**: FAILED" >> security-report.md
+          fi
+          
+          if [ "${{ needs.sobelow-security.result }}" == "success" ]; then
+            echo "✅ **Sobelow Analysis**: PASSED" >> security-report.md
+          else
+            echo "❌ **Sobelow Analysis**: FAILED" >> security-report.md
+          fi
+          
+          if [ "${{ needs.secrets-scan.result }}" == "success" ]; then
+            echo "✅ **Secrets Scan**: PASSED" >> security-report.md
+          else
+            echo "❌ **Secrets Scan**: FAILED" >> security-report.md
+          fi
+          
+          if [ "${{ needs.hipaa-compliance.result }}" == "success" ]; then
+            echo "✅ **HIPAA Compliance**: PASSED" >> security-report.md
+          else
+            echo "❌ **HIPAA Compliance**: FAILED" >> security-report.md
+          fi
+          
+          echo "" >> security-report.md
+          echo "View detailed results in the [Security tab](https://github.com/${{ github.repository }}/security)" >> security-report.md
+
+      - name: Upload Security Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.md
+
+      - name: Notify security team on failures
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#security'
+          text: |
+            🚨 Security scan failures detected!
+            **Repository**: ${{ github.repository }}
+            **Branch**: ${{ github.ref_name }}
+            **Commit**: ${{ github.sha }}
+            **Action**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

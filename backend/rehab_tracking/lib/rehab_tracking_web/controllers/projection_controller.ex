@@ -7,7 +7,6 @@ defmodule RehabTrackingWeb.ProjectionController do
   use RehabTrackingWeb, :controller
   
   alias RehabTracking.Core.Facade
-  alias RehabTrackingWeb.ProjectionView
 
   action_fallback RehabTrackingWeb.FallbackController
 
@@ -245,13 +244,14 @@ defmodule RehabTrackingWeb.ProjectionController do
   end
 
   defp add_option_if_present(opts, _key, nil, _parser), do: opts
-  defp add_option_if_present(opts, _key, nil), do: opts
   defp add_option_if_present(opts, key, value, parser) when is_function(parser) do
     case parser.(value) do
       nil -> opts
       parsed_value -> [{key, parsed_value} | opts]
     end
   end
+  
+  defp add_option_if_present(opts, _key, nil), do: opts
   defp add_option_if_present(opts, key, value) do
     [{key, value} | opts]
   end

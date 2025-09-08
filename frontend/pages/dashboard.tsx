@@ -3,7 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import Layout from '@/components/Layout';
 import PatientCard from '@/components/PatientCard';
-import { requireAuth } from '@/utils/auth';
+import { requireAuth } from "@/utils/auth";
 import { PatientSummary, DashboardStats } from '@/types';
 import { apiService } from '@/services/api';
 import {

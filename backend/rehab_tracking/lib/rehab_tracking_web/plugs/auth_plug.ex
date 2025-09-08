@@ -20,7 +20,7 @@ defmodule RehabTrackingWeb.Plugs.AuthPlug do
   end
 
   defp skip_auth?(path) do
-    path in ["/health", "/health/ready", "/health/live", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/patients/register"]
+    path in ["/health", "/health/ready", "/health/live", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/patients/register", "/login.html"]
   end
 
   defp authenticate_request(conn) do

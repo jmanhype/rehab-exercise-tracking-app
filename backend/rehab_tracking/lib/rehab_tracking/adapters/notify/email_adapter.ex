@@ -351,7 +351,7 @@ defmodule RehabTracking.Adapters.Notify.EmailAdapter do
     end
   end
 
-  defp simulate_smtp_send(recipient, content, _config) do
+  defp simulate_smtp_send(_recipient, _content, _config) do
     # Simulate network delay and occasional failures
     :timer.sleep(:rand.uniform(100))
     

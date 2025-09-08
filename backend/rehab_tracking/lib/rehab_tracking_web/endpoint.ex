@@ -36,10 +36,11 @@ defmodule RehabTrackingWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
-  # CORS configuration (temporarily disabled)
-  # plug CORSPlug,
-  #   origin: ["http://localhost:3000", "http://localhost:3001"],
-  #   credentials: true
+  # CORS configuration
+  plug CORSPlug,
+    origin: ["http://localhost:3000", "http://localhost:3001"],
+    credentials: true,
+    headers: ["Authorization", "Content-Type", "Accept", "Origin", "User-Agent", "DNT", "Cache-Control", "X-Requested-With", "If-Modified-Since", "Keep-Alive", "X-File-Name"]
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],

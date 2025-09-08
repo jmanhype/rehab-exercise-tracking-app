@@ -1,7 +1,7 @@
 import React, { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useAuth } from '@/utils/auth';
+import { useAuth } from "@/utils/auth";
 import {
   HomeIcon,
   UsersIcon,
@@ -75,13 +75,13 @@ export default function Layout({ children, title }: LayoutProps) {
               <div className="flex-shrink-0">
                 <div className="h-8 w-8 rounded-full bg-primary-600 flex items-center justify-center">
                   <span className="text-xs font-medium text-white">
-                    {user.name.split(' ').map(n => n[0]).join('')}
+                    {user.email ? user.email.charAt(0).toUpperCase() : 'U'}
                   </span>
                 </div>
               </div>
               <div className="ml-3">
-                <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                <p className="text-xs text-gray-500">{user.email}</p>
+                <p className="text-sm font-medium text-gray-700">{user.email}</p>
+                <p className="text-xs text-gray-500">{user.role}</p>
               </div>
             </div>
             <button

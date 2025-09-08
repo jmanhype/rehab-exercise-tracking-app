@@ -37,9 +37,9 @@ export default function PatientCard({ patient }: PatientCardProps) {
               <h3 className="text-lg font-medium text-gray-900">{patient.name}</h3>
               <div className="flex items-center mt-1">
                 <span
-                  className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${statusColors[patient.status]}`}
+                  className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${statusColors[patient.status || 'active']}`}
                 >
-                  {patient.status.charAt(0).toUpperCase() + patient.status.slice(1)}
+                  {patient.status ? (patient.status.charAt(0).toUpperCase() + patient.status.slice(1)) : 'Active'}
                 </span>
                 {patient.alert_count > 0 && (
                   <div className="ml-2 flex items-center text-red-600">

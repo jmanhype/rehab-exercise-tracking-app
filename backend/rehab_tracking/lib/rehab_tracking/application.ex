@@ -14,13 +14,13 @@ defmodule RehabTracking.Application do
       # Start the Ecto repository
       RehabTracking.Repo,
       
-      # Start the EventStore (temporarily disabled - missing dependency)
+      # Start the EventStore for event sourcing (temporarily disabled)
       # RehabTracking.EventStore,
       
-      # Start the Commanded application (disabled for initial setup)
+      # Start the Commanded application for CQRS/Event Sourcing (temporarily disabled)
       # RehabTracking.Core.CommandedApp,
       
-      # Start the Broadway pipeline for event processing (disabled for initial setup)
+      # Start the Broadway pipeline for event processing (disabled for minimal setup)
       # RehabTracking.Core.BroadwayPipeline,
       
       # Start the PubSub system

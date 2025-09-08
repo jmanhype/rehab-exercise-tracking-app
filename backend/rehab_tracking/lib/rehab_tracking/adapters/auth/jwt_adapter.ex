@@ -446,7 +446,7 @@ defmodule RehabTracking.Adapters.Auth.JWTAdapter do
     password_hash == expected_hash
   end
 
-  defp blacklist_token(token, expires_at) do
+  defp blacklist_token(_token, expires_at) do
     # In production, store in Redis or database
     # For now, just log the blacklisting
     Logger.info("Token blacklisted until #{expires_at}")
