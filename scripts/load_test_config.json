@@ -1,0 +1,142 @@
+{
+  "load_test": {
+    "description": "Main load test configuration targeting 1000 events/sec",
+    "scenarios": {
+      "event_ingestion": {
+        "executor": "ramping-vus",
+        "startVUs": 10,
+        "stages": [
+          {"duration": "2m", "target": 50},
+          {"duration": "5m", "target": 100},
+          {"duration": "2m", "target": 0}
+        ],
+        "gracefulRampDown": "1m"
+      }
+    },
+    "thresholds": {
+      "http_req_duration": ["p(95)<200"],
+      "http_req_failed": ["rate<0.001"],
+      "event_ingestion_success": ["rate>0.99"],
+      "projection_lag_ms": ["p(95)<100"]
+    }
+  },
+  "broadway_test": {
+    "description": "Broadway pipeline-specific load testing",
+    "target_batch_size": 100,
+    "target_processors": 10,
+    "target_throughput": 1000,
+    "scenarios": {
+      "sustained_load": {
+        "duration": "5m",
+        "vus": 50,
+        "description": "Normal sustained operation"
+      },
+      "burst_load": {
+        "description": "Sensor data burst simulation",
+        "stages": [
+          {"duration": "30s", "target": 100},
+          {"duration": "10s", "target": 2000},
+          {"duration": "30s", "target": 2000},
+          {"duration": "10s", "target": 100}
+        ]
+      },
+      "capacity_ramp": {
+        "description": "Gradual capacity testing",
+        "stages": [
+          {"duration": "2m", "target": 500},
+          {"duration": "2m", "target": 1000},
+          {"duration": "2m", "target": 1500},
+          {"duration": "2m", "target": 2000}
+        ]
+      }
+    }
+  },
+  "performance_targets": {
+    "api_response_time_p95": 200,
+    "error_rate_max": 0.001,
+    "events_per_second": 1000,
+    "projection_lag_p95": 100,
+    "broadway_batch_latency_p95": 1000,
+    "success_rate_min": 0.99
+  },
+  "test_data": {
+    "patient_pool_size": 1000,
+    "exercises": [
+      {
+        "id": "knee_flexion",
+        "prescribed_reps": 15,
+        "avg_duration_ms": 3000
+      },
+      {
+        "id": "hip_extension",
+        "prescribed_reps": 12,
+        "avg_duration_ms": 2500
+      },
+      {
+        "id": "ankle_rotation",
+        "prescribed_reps": 20,
+        "avg_duration_ms": 2000
+      }
+    ],
+    "quality_score_range": {
+      "min": 0.60,
+      "max": 0.95
+    },
+    "confidence_rating_range": {
+      "min": 0.90,
+      "max": 1.00
+    }
+  },
+  "environments": {
+    "local": {
+      "base_url": "http://localhost:4000",
+      "description": "Local development environment"
+    },
+    "staging": {
+      "base_url": "https://staging.rehab-tracking.example.com",
+      "description": "Staging environment"
+    },
+    "production": {
+      "base_url": "https://api.rehab-tracking.example.com",
+      "description": "Production environment (use with extreme caution)"
+    }
+  },
+  "reporting": {
+    "output_formats": ["json", "html", "csv"],
+    "metrics_to_track": [
+      "http_req_duration",
+      "http_req_failed",
+      "event_ingestion_success",
+      "projection_lag_ms",
+      "broadway_batch_latency_ms",
+      "broadway_event_processing_success"
+    ],
+    "alert_thresholds": {
+      "critical_response_time": 500,
+      "critical_error_rate": 0.01,
+      "critical_projection_lag": 1000
+    }
+  },
+  "advanced_scenarios": {
+    "stress_test": {
+      "description": "Push system beyond normal limits",
+      "vus": 200,
+      "duration": "15m",
+      "expected_degradation": true
+    },
+    "soak_test": {
+      "description": "Extended duration testing for memory leaks",
+      "vus": 50,
+      "duration": "2h",
+      "focus": "memory_stability"
+    },
+    "spike_test": {
+      "description": "Sudden traffic spikes",
+      "stages": [
+        {"duration": "5m", "target": 50},
+        {"duration": "1m", "target": 300},
+        {"duration": "5m", "target": 50}
+      ]
+    }
+  }
+}

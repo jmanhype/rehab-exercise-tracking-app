@@ -1,0 +1,630 @@
+openapi: 3.0.3
+info:
+  title: Rehab Exercise Tracking Core API
+  description: Event-sourced API for physical therapist monitoring of patient home exercises
+  version: 0.1.0
+  contact:
+    name: API Support
+    email: api@rehabtracking.example
+  license:
+    name: Proprietary
+    
+servers:
+  - url: https://api.rehabtracking.example/v1
+    description: Production server
+  - url: https://staging-api.rehabtracking.example/v1
+    description: Staging server
+  - url: http://localhost:4000/api/v1
+    description: Development server
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Events
+    description: Event logging and streaming
+  - name: Projections
+    description: Read model queries
+  - name: Alerts
+    description: Alert management
+  - name: Feedback
+    description: Therapist feedback
+
+paths:
+  /events:
+    post:
+      tags:
+        - Events
+      summary: Log an event to the event store
+      operationId: logEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventEnvelope'
+      responses:
+        '201':
+          description: Event logged successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event_id:
+                    type: string
+                    example: evt_123e4567-e89b-12d3-a456-426614174000
+                  stream_position:
+                    type: integer
+                    example: 1247
+                  timestamp:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /patients/{patient_id}/stream:
+    get:
+      tags:
+        - Events
+      summary: Get event stream for a patient
+      operationId: getPatientStream
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Patient identifier
+        - name: from_position
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+          description: Starting position in stream
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+          description: Maximum events to return
+        - name: event_types
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [exercise_session, rep_observation, feedback, alert, consent]
+          style: form
+          explode: false
+          description: Filter by event types
+      responses:
+        '200':
+          description: Event stream retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patient_id:
+                    type: string
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EventEnvelope'
+                  next_position:
+                    type: integer
+                    nullable: true
+                  has_more:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projections/adherence:
+    get:
+      tags:
+        - Projections
+      summary: Query adherence projections
+      operationId: getAdherenceProjections
+      parameters:
+        - name: patient_id
+          in: query
+          schema:
+            type: string
+          description: Filter by patient
+        - name: therapist_id
+          in: query
+          schema:
+            type: string
+          description: Filter by assigned therapist
+        - name: min_adherence
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 100
+          description: Minimum adherence percentage
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [7d, 14d, 28d]
+            default: 7d
+          description: Time window for calculations
+      responses:
+        '200':
+          description: Adherence data retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdherenceProjection'
+                  summary:
+                    type: object
+                    properties:
+                      total_patients:
+                        type: integer
+                      average_adherence:
+                        type: number
+                      at_risk_count:
+                        type: integer
+
+  /projections/quality:
+    get:
+      tags:
+        - Projections
+      summary: Query quality projections
+      operationId: getQualityProjections
+      parameters:
+        - name: patient_id
+          in: query
+          schema:
+            type: string
+          description: Filter by patient
+        - name: exercise_id
+          in: query
+          schema:
+            type: string
+          description: Filter by exercise
+        - name: max_quality
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+          description: Maximum quality score (for finding issues)
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [7d, 14d, 28d]
+            default: 7d
+      responses:
+        '200':
+          description: Quality data retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/QualityProjection'
+
+  /projections/work-queue:
+    get:
+      tags:
+        - Projections
+      summary: Get therapist work queue
+      operationId: getWorkQueue
+      parameters:
+        - name: therapist_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Therapist identifier
+        - name: urgency
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [critical, high, medium, low]
+          style: form
+          explode: false
+        - name: include_resolved
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Work queue retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkQueueProjection'
+
+  /alerts:
+    post:
+      tags:
+        - Alerts
+      summary: Emit an alert
+      operationId: emitAlert
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertRequest'
+      responses:
+        '201':
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /alerts/{alert_id}:
+    patch:
+      tags:
+        - Alerts
+      summary: Update alert status
+      operationId: updateAlert
+      parameters:
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [acknowledged, in_review, resolved, dismissed]
+                resolution_notes:
+                  type: string
+      responses:
+        '200':
+          description: Alert updated
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /feedback:
+    post:
+      tags:
+        - Feedback
+      summary: Submit therapist feedback
+      operationId: submitFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '201':
+          description: Feedback submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  feedback_id:
+                    type: string
+                  delivered_at:
+                    type: string
+                    format: date-time
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: Unprocessable entity
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    ValidationError:
+      type: object
+      required:
+        - error
+        - message
+        - validation_errors
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        validation_errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+    EventEnvelope:
+      type: object
+      required:
+        - kind
+        - subject_id
+        - body
+      properties:
+        event_id:
+          type: string
+          readOnly: true
+        kind:
+          type: string
+          enum: [exercise_session, rep_observation, feedback, alert, consent]
+        ts:
+          type: string
+          format: date-time
+          readOnly: true
+        subject_id:
+          type: string
+        exercise_id:
+          type: string
+        body:
+          type: object
+          description: Event-specific payload
+        meta:
+          type: object
+          properties:
+            phi:
+              type: boolean
+              default: true
+            consent_id:
+              type: string
+            site_id:
+              type: string
+            version:
+              type: integer
+              default: 1
+            correlation_id:
+              type: string
+
+    AdherenceProjection:
+      type: object
+      properties:
+        patient_id:
+          type: string
+        week_start:
+          type: string
+          format: date
+        prescribed_sessions:
+          type: integer
+        completed_sessions:
+          type: integer
+        partial_sessions:
+          type: integer
+        missed_sessions:
+          type: integer
+        adherence_percentage:
+          type: number
+        rolling_7day_avg:
+          type: number
+        rolling_28day_avg:
+          type: number
+        last_session_date:
+          type: string
+          format: date-time
+        consecutive_missed_days:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+
+    QualityProjection:
+      type: object
+      properties:
+        patient_id:
+          type: string
+        exercise_id:
+          type: string
+        observation_window:
+          type: string
+        total_reps:
+          type: integer
+        average_quality:
+          type: number
+        critical_issues_count:
+          type: integer
+        critical_issues_percentage:
+          type: number
+        quality_trend:
+          type: string
+          enum: [improving, stable, declining]
+        percentile_25:
+          type: number
+        percentile_50:
+          type: number
+        percentile_75:
+          type: number
+        updated_at:
+          type: string
+          format: date-time
+
+    WorkQueueProjection:
+      type: object
+      properties:
+        therapist_id:
+          type: string
+        queue_items:
+          type: array
+          items:
+            type: object
+            properties:
+              item_id:
+                type: string
+              patient_id:
+                type: string
+              patient_name:
+                type: string
+              item_type:
+                type: string
+                enum: [alert, review, feedback_needed]
+              urgency:
+                type: string
+                enum: [critical, high, medium, low]
+              description:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              sla_deadline:
+                type: string
+                format: date-time
+        critical_count:
+          type: integer
+        high_count:
+          type: integer
+        medium_count:
+          type: integer
+        low_count:
+          type: integer
+        avg_response_time_hours:
+          type: number
+        sla_at_risk:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+
+    AlertRequest:
+      type: object
+      required:
+        - patient_id
+        - alert_type
+        - urgency
+        - trigger_criteria
+      properties:
+        patient_id:
+          type: string
+        alert_type:
+          type: string
+          enum: [quality_degradation, missed_sessions, improvement]
+        urgency:
+          type: string
+          enum: [critical, high, medium, low]
+        trigger_criteria:
+          type: object
+          properties:
+            metric:
+              type: string
+            threshold:
+              type: number
+            actual_value:
+              type: number
+            duration_days:
+              type: integer
+        context:
+          type: object
+        assigned_to:
+          type: string
+
+    AlertResponse:
+      type: object
+      properties:
+        alert_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        sla_deadline:
+          type: string
+          format: date-time
+        resolution_status:
+          type: string
+
+    FeedbackRequest:
+      type: object
+      required:
+        - patient_id
+        - therapist_id
+        - content
+        - feedback_type
+      properties:
+        patient_id:
+          type: string
+        therapist_id:
+          type: string
+        feedback_type:
+          type: string
+          enum: [session, pattern, general]
+        target_session_id:
+          type: string
+        content:
+          type: string
+        priority:
+          type: string
+          enum: [high, medium, low]

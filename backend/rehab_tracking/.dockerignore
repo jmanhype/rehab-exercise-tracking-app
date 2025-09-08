@@ -1,0 +1,74 @@
+# Ignore development and build artifacts
+_build/
+deps/
+.mix/
+
+# Ignore test files in production
+test/
+coverage/
+
+# Ignore documentation
+doc/
+docs/
+
+# Ignore local configuration
+config/*.secret.exs
+.env*
+
+# Ignore version control
+.git/
+.gitignore
+
+# Ignore CI/CD files
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore logs
+*.log
+log/
+logs/
+
+# Ignore temporary files
+tmp/
+temp/
+
+# Ignore node modules (if any)
+node_modules/
+npm-debug.log
+
+# Ignore Elixir specific
+.elixir_ls/
+.fetch
+
+# Ignore performance test data
+test/performance/data/
+test/fixtures/large/
+
+# Ignore local development files
+dev.exs.local
+docker-compose.override.yml
+
+# Ignore deployment files
+deploy/
+k8s/local/
+terraform/
+
+# Ignore backup files
+*.bak
+*.backup
+
+# Ignore profiling data
+prof/
+*.prof

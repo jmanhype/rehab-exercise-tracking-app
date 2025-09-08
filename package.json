@@ -1,0 +1,47 @@
+{
+  "name": "hft-crypto-trading-system",
+  "version": "1.0.0",
+  "description": "High-frequency cryptocurrency trading system with real-time market data processing",
+  "main": "backend/src/server.ts",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "services/data",
+    "services/trading",
+    "services/monitoring"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:services\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:services": "concurrently \"cd services/data && npm run dev\" \"cd services/trading && npm run dev\" \"cd services/monitoring && npm run dev\"",
+    "build": "npm run build:backend && npm run build:frontend && npm run build:services",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "build:services": "cd services/data && npm run build && cd ../trading && npm run build && cd ../monitoring && npm run build",
+    "test": "npm run test:backend && npm run test:services",
+    "test:backend": "cd backend && npm run test",
+    "test:services": "cd services/data && npm run test && cd ../trading && npm run test",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:build": "docker-compose build",
+    "migrate": "cd backend && npm run migrate",
+    "seed": "cd backend && npm run seed"
+  },
+  "keywords": ["crypto", "trading", "hft", "real-time", "websocket", "timeseries"],
+  "author": "Trading Infrastructure Team",
+  "license": "PROPRIETARY",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0",
+    "nodemon": "^3.0.0",
+    "eslint": "^8.55.0",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "prettier": "^3.1.0",
+    "husky": "^8.0.0",
+    "lint-staged": "^15.2.0"
+  }
+}
