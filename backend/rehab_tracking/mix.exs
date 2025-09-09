@@ -41,6 +41,9 @@ defmodule RehabTracking.MixProject do
       {:bcrypt_elixir, "~> 3.0"},       # Password hashing
       {:httpoison, "~> 2.0"},           # HTTP client for FHIR
       
+      # Auth
+      {:joken, "~> 2.6"},
+      
       # Event sourcing and CQRS dependencies
       {:commanded, "~> 1.4"},           # CQRS/Event Sourcing framework
       {:eventstore, "~> 1.4"},         # Event store for Commanded
@@ -49,10 +52,13 @@ defmodule RehabTracking.MixProject do
       
       # Broadway stream processing
       {:broadway, "~> 1.0"},               # Core Broadway
+      # {:broadway_sqs, "~> 0.7", optional: true},       # Commented out - OTP version issue
+      # {:broadway_rabbitmq, "~> 0.8", optional: true},  # Commented out - OTP version issue
       
       # Phoenix web dependencies 
       {:phoenix_live_view, "~> 1.0"},   # LiveView components
       {:phoenix_html, "~> 4.0"},        # HTML helpers
+      {:phoenix_live_dashboard, "~> 0.8"},
       {:gettext, "~> 0.20"},           # Internationalization
       {:telemetry_metrics, "~> 1.0"},  # Metrics collection
       {:telemetry_poller, "~> 1.0"},   # Telemetry polling
@@ -61,7 +67,10 @@ defmodule RehabTracking.MixProject do
       # Test dependencies
       {:mox, "~> 1.0", only: :test},
       {:excoveralls, "~> 0.18", only: :test}, # Code coverage
-      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false} # Security analysis
+      
+      # Security/quality (dev/test only)
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false}, # Security analysis
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end
 

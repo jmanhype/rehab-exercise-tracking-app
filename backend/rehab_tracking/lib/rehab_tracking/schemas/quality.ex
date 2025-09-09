@@ -17,7 +17,7 @@ defmodule RehabTracking.Schemas.Quality do
     import Ecto.Changeset
 
     @primary_key {:patient_id, :binary_id, autogenerate: false}
-    @derive {Phoenix.Param, key: :patient_id}
+    # @derive {Phoenix.Param, key: :patient_id}  # Commented out - Phoenix not loaded yet
     schema "quality_patient_summary" do
       field :therapist_id, :binary_id
       field :average_quality_score, :decimal, default: Decimal.new("0.0")

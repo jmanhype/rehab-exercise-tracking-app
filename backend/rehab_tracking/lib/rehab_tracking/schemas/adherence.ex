@@ -17,7 +17,7 @@ defmodule RehabTracking.Schemas.Adherence do
     import Ecto.Changeset
 
     @primary_key {:patient_id, :binary_id, autogenerate: false}
-    @derive {Phoenix.Param, key: :patient_id}
+    # @derive {Phoenix.Param, key: :patient_id}  # Commented out - Phoenix not loaded yet
     schema "adherence_patient_summary" do
       field :therapist_id, :binary_id
       field :program_start_date, :date

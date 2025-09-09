@@ -17,7 +17,7 @@ defmodule RehabTracking.Schemas.Auth do
     import Ecto.Changeset
 
     @primary_key {:id, :binary_id, autogenerate: true}
-    @derive {Phoenix.Param, key: :id}
+    # @derive {Phoenix.Param, key: :id}  # Commented out - Phoenix not loaded yet
     schema "users" do
       field :email, :string
       field :password_hash, :string

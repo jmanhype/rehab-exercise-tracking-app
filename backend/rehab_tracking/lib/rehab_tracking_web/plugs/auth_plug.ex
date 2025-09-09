@@ -7,7 +7,7 @@ defmodule RehabTrackingWeb.Plugs.AuthPlug do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
   
-  alias RehabTracking.Adapters.Auth
+  alias RehabTracking.Auth.JWTToken
 
   def init(opts), do: opts
 
@@ -38,13 +38,13 @@ defmodule RehabTrackingWeb.Plugs.AuthPlug do
   end
 
   defp validate_token(conn, token) do
-    case Auth.validate_jwt_token(token) do
-      {:ok, claims} ->
+    case JWTToken.verify_token(token) do
+      {:ok, token_data} ->
         conn
-        |> assign(:current_user, claims)
+        |> assign(:current_user, token_data)
         |> assign(:authenticated, true)
       {:error, reason} ->
-        handle_auth_error(conn, "Invalid token: #{reason}")
+        handle_auth_error(conn, "Invalid token: #{inspect(reason)}")
     end
   end
 
